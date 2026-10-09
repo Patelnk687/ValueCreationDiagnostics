@@ -1,0 +1,27 @@
+.stApp, [data-testid="stAppViewContainer"] {
+  background: #08080A;
+  color: #E8E6E3;
+}
+[data-testid="stHeader"], [data-testid="stSidebar"] { display: none; }
+.block-container { padding-top: 1.2rem; max-width: 1180px; }
+h1, h2, h3, p, label, span { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+a { color: #FFB100; }
+.v-kicker { color: #00F0FF; letter-spacing: 0.14em; font-size: 0.75rem; text-transform: uppercase; }
+.v-card {
+  border: 1px solid #2A2A32;
+  background: #101014;
+  padding: 1rem 1.1rem;
+  border-radius: 2px;
+  margin-bottom: 0.75rem;
+}
+.v-amber { color: #FFB100; }
+.v-cyan { color: #00F0FF; }
+.v-green { color: #00FF66; }
+.v-red { color: #F04B55; }
+.v-muted { color: #9A978F; }
+div.stButton > button[kind="primary"] {
+  background: #FFB100;
+  color: #08080A;
+  border: none;
+  font-weight: 700;
+}
