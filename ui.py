@@ -8,6 +8,12 @@ import database as db
 from scoring import POINTS
 
 MONEY = lambda n: "Not provided" if n is None else f"${n / 1_000_000:.1f}M"
+HOME = ADVISOR = BUSINESS = None
+
+
+def bind(home, advisor, business) -> None:
+    global HOME, ADVISOR, BUSINESS
+    HOME, ADVISOR, BUSINESS = home, advisor, business
 
 
 def inject() -> None:
@@ -15,7 +21,8 @@ def inject() -> None:
 
 
 def header() -> None:
-    st.page_link("pages/home.py", label="VETTED", icon=":material/shield:")
+    if HOME is not None:
+        st.page_link(HOME, label="VETTED", icon=":material/shield:")
     st.caption("Directional sale-readiness screen. Not a valuation or a close probability.")
 
 
@@ -36,9 +43,29 @@ def render_home() -> None:
     )
     c1, c2 = st.columns(2)
     with c1:
-        st.page_link("pages/business.py", label="Business owner portal", icon=":material/storefront:")
+        st.page_link(BUSINESS, label="Business owner portal", icon=":material/storefront:")
+        if st.button("Open owner portal", type="primary", use_container_width=True):
+            st.switch_page(BUSINESS)
     with c2:
-        st.page_link("pages/advisor.py", label="Advisor desk", icon=":material/work:")
+        st.page_link(ADVISOR, label="Advisor desk", icon=":material/work:")
+        if st.button("Open advisor desk", use_container_width=True):
+            st.switch_page(ADVISOR)
+
+    st.subheader("Five stages")
+    s1, s2, s3, s4, s5 = st.columns(5)
+    s1.markdown("**1. Profile.** Name, industry, revenue, EBITDA, headcount.")
+    s2.markdown("**2. Ten answers.** Team, sales, customers, financials, concentration, legal, assets, process.")
+    s3.markdown("**3. Score.** 10 / 5 / 0. High, Medium, or Low readiness.")
+    s4.markdown("**4. Advisor decision.** Accept, reject, or request clarification.")
+    s5.markdown("**5. Owner reply.** One reply to a clarification. Status updates in the portal.")
+
+    preview = st.tabs(["Owner", "Advisor", "Shared record"])
+    with preview[0]:
+        st.markdown("The owner signs up, answers ten questions once, and sees a readiness band. They do not see the numeric score or the advisor's private note.")
+    with preview[1]:
+        st.markdown("The advisor sees every client in the firm, the 0–100 score, the inverse risk band, each answer with its points, and decision history.")
+    with preview[2]:
+        st.markdown("Accept, reject, and clarification are stored. A clarification can take one owner reply. A newer decision replaces the current status. Earlier updates stay in history.")
 
     a, b, c = st.columns(3)
     a.markdown("**Owner.** Ten structured answers and a plain High / Medium / Low band.")

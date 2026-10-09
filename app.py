@@ -1,6 +1,7 @@
 import streamlit as st
 
 import database as db
+import ui
 
 st.set_page_config(
     page_title="Vetted",
@@ -11,9 +12,9 @@ st.set_page_config(
 
 db.init_db()
 
-home = st.Page("pages/home.py", title="Home", url_path="", default=True)
-advisor = st.Page("pages/advisor.py", title="Advisor", url_path="advisor")
-business = st.Page("pages/business.py", title="Business", url_path="business")
+home = st.Page(ui.render_home, title="Home", url_path="", default=True)
+advisor = st.Page(ui.render_advisor, title="Advisor", url_path="advisor")
+business = st.Page(ui.render_business, title="Business", url_path="business")
+ui.bind(home, advisor, business)
 
-nav = st.navigation([home, advisor, business], position="hidden")
-nav.run()
+st.navigation([home, advisor, business], position="hidden").run()
