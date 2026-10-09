@@ -232,9 +232,39 @@ def _owner_result(user: dict, client: dict) -> None:
             st.caption(row["label"])
 
 
-def render_advisor() -> None:
+def _stage_view(stage: str) -> tuple[str, str]:
+    return {
+        "Profile only": ("Profile only", "profile"),
+        "Awaiting review": ("Awaiting decision", "wait"),
+        "Clarification requested": ("Clarification requested", "clarification"),
+        "Clarification received": ("Clarification received", "clarification-received"),
+        "Accepted": ("Accepted", "accepted"),
+        "Rejected": ("Rejected", "rejected"),
+    }.get(stage, (stage, "wait"))
+
+
+def _risk_color(risk: str | None) -> str:
+    return {"Low": "v-green", "Medium": "v-amber", "High": "v-red"}.get(risk or "", "v-muted")
+
+
+def _shell(right: str = "") -> None:
     inject()
-    header()
+    st.markdown(
+        f"""
+        <div class="v-top">
+          <div>
+            <div class="v-brand"><span>V</span>ETTED.</div>
+            <div class="v-tag">DEAL READINESS. MADE CLEAR</div>
+          </div>
+          <div class="v-tag">{right}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_advisor() -> None:
+    _shell()
     user = st.session_state.get("auth_user")
     if not user or st.session_state.get("auth_role") != "advisor":
         login, signup = st.tabs(["Sign in", "Create advisor login"])
@@ -273,98 +303,245 @@ def render_advisor() -> None:
                         st.session_state.auth_role = "advisor"
                         st.rerun()
         return
-    st.write(f"**{user['display_name']}**")
-    if st.button("Sign out"):
-        sign_out()
+    if st.session_state.get("selected_client"):
+        client = db.get_client_for_advisor(user["firm_id"], st.session_state.selected_client)
+        if client:
+            _audit(user, client)
+            return
+        st.session_state.pop("selected_client", None)
+    _pipeline(user)
+
+
+def _pipeline(user: dict) -> None:
+    top_l, top_r = st.columns([4, 1])
+    with top_r:
+        if st.button("SIGN OUT", use_container_width=True):
+            sign_out()
+    _shell("ADVISOR WORKSPACE")
+    st.markdown('<p class="v-kicker">Advisor desk / pipeline</p>', unsafe_allow_html=True)
+    st.markdown("<h1 style='margin:0'>Opportunity desk</h1>", unsafe_allow_html=True)
+    st.markdown(
+        '<p class="v-sub">Review the pipeline, inspect each driver, and record a clear next step.</p>',
+        unsafe_allow_html=True,
+    )
     clients = db.list_clients(user["firm_id"])
     submitted = [c for c in clients if c["submitted"]]
     decided = [c for c in clients if c["latest_decision"]]
     avg = round(sum(c["score"] for c in submitted) / len(submitted)) if submitted else 0
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Clients", len(clients))
-    m2.metric("Submitted", len(submitted))
-    m3.metric("Avg readiness", avg if submitted else "—")
-    m4.metric("Decisions", len(decided))
-
-    query = st.text_input("Search company or industry")
-    stage = st.selectbox("Stage", ["All", "Profile only", "Awaiting review", "Clarification requested", "Clarification received", "Accepted", "Rejected"])
-    sort = st.selectbox("Sort", ["Newest", "Score high", "Score low", "Name"])
+    action = [
+        c for c in clients
+        if c["stage"] in {"Awaiting review", "Clarification received"}
+    ]
+    cards = st.columns(4)
+    stats = [
+        ("Clients", str(len(clients))),
+        ("Assessments", str(len(submitted))),
+        ("Average readiness", f"{avg}%" if submitted else "—"),
+        ("Decisions", str(len(decided))),
+    ]
+    for col, (label, value) in zip(cards, stats):
+        col.markdown(
+            f'<div class="v-card"><div class="v-label">{label}</div><div class="v-num">{value}</div></div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f"""
+        <div class="v-queue">
+          <div class="v-kicker">Review queue</div>
+          <strong>{len(action):02d} {"opportunity needs" if len(action) == 1 else "opportunities need"} advisor action</strong>
+          <div class="v-muted">New assessments and answered clarification requests appear here.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('<p class="v-kicker">01 · Pipeline explorer</p>', unsafe_allow_html=True)
+    f1, f2, f3 = st.columns([1.2, 1, 1])
+    query = f1.text_input("Search", placeholder="Company or industry")
+    stage = f2.selectbox(
+        "Stage",
+        ["All stages", "Profile only", "Awaiting decision", "Clarification requested", "Clarification received", "Accepted", "Rejected"],
+    )
+    sort = f3.selectbox("Sort", ["Company A–Z", "Score high–low", "Score low–high", "Newest"])
+    stage_filter = {
+        "Awaiting decision": "Awaiting review",
+    }.get(stage, stage)
     rows = clients
     if query:
         q = query.lower()
         rows = [c for c in rows if q in c["business_name"].lower() or q in c["industry"].lower()]
-    if stage != "All":
-        rows = [c for c in rows if c["stage"] == stage]
-    if sort == "Name":
+    if stage != "All stages":
+        rows = [c for c in rows if c["stage"] == stage_filter]
+    if sort == "Company A–Z":
         rows = sorted(rows, key=lambda c: c["business_name"].lower())
-    elif sort == "Score high":
-        rows = sorted(rows, key=lambda c: c["score"] if c["score"] is not None else -1, reverse=True)
-    elif sort == "Score low":
-        rows = sorted(rows, key=lambda c: c["score"] if c["score"] is not None else 101)
+    elif sort == "Score high–low":
+        rows = sorted(rows, key=lambda c: -1 if c["score"] is None else c["score"], reverse=True)
+    elif sort == "Score low–high":
+        rows = sorted(rows, key=lambda c: 101 if c["score"] is None else c["score"])
     else:
         rows = sorted(rows, key=lambda c: c["created_at"], reverse=True)
-
+    st.caption(f"{len(rows)} of {len(clients)} client records")
     if not rows:
-        st.caption("No clients match.")
+        st.markdown('<p class="v-muted">No clients match.</p>', unsafe_allow_html=True)
         return
-    labels = {f"{c['business_name']} · {c['stage']}": c["id"] for c in rows}
-    selected_label = st.selectbox("Client", list(labels))
-    client = db.get_client_for_advisor(user["firm_id"], labels[selected_label])
-    _audit(user, client)
+    for client in rows:
+        label, badge = _stage_view(client["stage"])
+        risk = (client.get("risk") or "").upper()
+        color = _risk_color(client.get("risk"))
+        score = "—" if client["score"] is None else f"{client['score']}%"
+        risk_line = f"{risk} RISK" if client["score"] is not None else "NO SCORE"
+        left, right = st.columns([6, 1])
+        left.markdown(
+            f"""
+            <div class="v-row">
+              <div><strong>{client['business_name']}</strong><br>
+                <span class="v-muted">{MONEY(client['annual_revenue'])} annual revenue</span></div>
+              <div class="v-muted">{client['industry']}</div>
+              <div><span class="v-badge {badge}">{label}</span></div>
+              <div class="{color}"><strong>{score}</strong><br><span class="v-muted">{risk_line}</span></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if right.button("OPEN →", key=f"open-{client['id']}"):
+            st.session_state.selected_client = client["id"]
+            st.rerun()
 
 
 def _audit(user: dict, client: dict) -> None:
-    st.subheader(client["business_name"])
-    st.caption(f"{client['industry']} · {client['stage']}")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Revenue", MONEY(client["annual_revenue"]))
-    c2.metric("EBITDA", MONEY(client["annual_ebitda"]))
-    c3.metric("Employees", client["employee_count"] if client["employee_count"] is not None else "Not provided")
-    margin = client["ebitda_margin"]
-    c4.metric("EBITDA margin", "N/A" if margin is None else f"{margin:.1f}%")
-    if client["score"] is None:
-        st.warning("Questionnaire is not complete. No score and no decision yet.")
-        return
+    if st.button("← BACK TO PIPELINE"):
+        st.session_state.pop("selected_client", None)
+        st.rerun()
+    label, _badge = _stage_view(client["stage"])
+    _shell("ADVISOR WORKSPACE")
     st.markdown(
-        f'<p class="v-cyan">{client["score"]}/100</p><p>Readiness {client["readiness"]} · Risk {client["risk"]}</p>',
+        f'<p class="v-kicker">Client audit / {label}</p>',
         unsafe_allow_html=True,
     )
-    st.progress(client["score"] / 100)
-    groups = {"Strong · 10": [], "Mixed · 5": [], "Needs attention · 0": []}
-    for row in client["answers"]:
-        bucket = {10: "Strong · 10", 5: "Mixed · 5", 0: "Needs attention · 0"}[POINTS[row["rating"]]]
-        groups[bucket].append(row)
-    tabs = st.tabs([f"{name} ({len(items)})" for name, items in groups.items()])
-    for tab, items in zip(tabs, groups.values()):
-        with tab:
-            for row in items:
-                st.markdown(f"**{row['prompt']}**")
-                st.write(row["label"])
-                st.caption(f"{POINTS[row['rating']]} points")
-    with st.form("decision"):
-        decision = st.selectbox("Decision", ["accepted", "rejected", "clarification"])
-        owner_message = st.text_area("Message the owner sees (required for clarification)", max_chars=1000)
-        private_note = st.text_area("Private note (advisor only)", max_chars=1000)
-        if st.form_submit_button("Record decision", type="primary"):
-            try:
-                db.record_decision(
-                    firm_id=user["firm_id"],
-                    advisor_id=user["id"],
-                    client_id=client["id"],
-                    decision=decision,
-                    owner_message=owner_message,
-                    private_note=private_note,
-                )
-            except (ValueError, PermissionError) as exc:
-                st.error(str(exc))
-            else:
-                st.rerun()
-    st.subheader("Decision history")
-    for item in client["decisions"]:
-        st.markdown(f"**{item['decision']}** · {item['advisor_name']} · {item['created_at']}")
-        if item.get("owner_message"):
-            st.write(f"Owner message: {item['owner_message']}")
-        if item.get("private_note"):
-            st.caption(f"Private: {item['private_note']}")
-        if item.get("reply_message"):
-            st.write(f"Owner reply: {item['reply_message']}")
+    st.markdown(f"<h1 style='margin:0'>{client['business_name']}</h1>", unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="v-muted">{client["industry"]} · CLT-{client["id"]:06d} · {label}</p>',
+        unsafe_allow_html=True,
+    )
+    margin = client["ebitda_margin"]
+    employees = "Not provided" if client["employee_count"] is None else str(client["employee_count"])
+    profile = [
+        ("Annual revenue", MONEY(client["annual_revenue"])),
+        ("Annual EBITDA", MONEY(client["annual_ebitda"])),
+        ("Employees", employees),
+        ("EBITDA margin", "N/A" if margin is None else f"{margin:.1f}%"),
+    ]
+    cols = st.columns(4)
+    for col, (name, value) in zip(cols, profile):
+        col.markdown(
+            f'<div class="v-card"><div class="v-label">{name}</div><div class="v-num">{value}</div></div>',
+            unsafe_allow_html=True,
+        )
+    steps = [
+        ("Business profile", True, "Company details captured"),
+        ("Questionnaire", client["submitted"], "Ten owner responses" if client["submitted"] else "Waiting on owner"),
+        ("Readiness score", client["score"] is not None, "Ten signals calculated" if client["score"] is not None else "Not scored"),
+        ("Advisor decision", bool(client["latest_decision"]), "Representation outcome" if client["latest_decision"] else "Not recorded"),
+    ]
+    done = sum(1 for _n, ok, _d in steps if ok)
+    bits = []
+    for idx, (name, ok, detail) in enumerate(steps, start=1):
+        bits.append(
+            f'<div class="v-step"><div class="v-dot {"on" if ok else ""}">{idx:02d}</div>'
+            f'<div class="v-muted">{"COMPLETE" if ok else "CURRENT"}</div><strong>{name}</strong>'
+            f'<div class="v-muted">{detail}</div></div>'
+        )
+    st.markdown(
+        f'<p class="v-kicker">Qualification timeline · {done:02d} / 04 complete</p><div class="v-steps">{"".join(bits)}</div>',
+        unsafe_allow_html=True,
+    )
+    overview, questionnaire, history = st.tabs(["OVERVIEW", "QUESTIONNAIRE", "DECISION & HISTORY"])
+    with overview:
+        if client["score"] is None:
+            st.markdown('<p class="v-muted">Questionnaire is not complete. No score and no decision yet.</p>', unsafe_allow_html=True)
+        else:
+            color = _risk_color(client["risk"])
+            strong = sum(1 for row in client["answers"] if row["rating"] == "high")
+            mixed = sum(1 for row in client["answers"] if row["rating"] == "medium")
+            weak = sum(1 for row in client["answers"] if row["rating"] == "low")
+            left, right = st.columns([1.2, 1])
+            left.markdown(
+                f"""
+                <div class="v-card">
+                  <div class="v-label">Deal readiness</div>
+                  <div class="{color}" style="font-size:3rem;font-weight:700">{client['score']}%</div>
+                  <div class="{color}">{client['risk'].upper()} RISK</div>
+                  <p class="v-muted">Higher readiness indicates fewer concerns across the ten selling signals.</p>
+                  <div class="v-label">Readiness index</div>
+                  <div class="v-bar"><div style="width:{client['score']}%"></div></div>
+                  <div class="v-muted">{client['score']} / 100</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            right.markdown(
+                f"""
+                <div class="v-card">
+                  <div class="v-label">Signal mix</div>
+                  <div class="v-green">Strong</div><div class="v-mix"><div class="v-green"></div></div>
+                  <div class="v-muted">{strong:02d}</div>
+                  <div class="v-amber">Mixed</div>
+                  <div class="v-muted">{mixed:02d}</div>
+                  <div class="v-red">Needs attention</div>
+                  <div class="v-muted">{weak:02d}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            groups = {"NEEDS ATTENTION": [], "MIXED": [], "STRONG": []}
+            for row in client["answers"]:
+                groups[{"low": "NEEDS ATTENTION", "medium": "MIXED", "high": "STRONG"}[row["rating"]]].append(row)
+            st.markdown(
+                '<p class="v-kicker">Driver breakdown</p>'
+                '<p class="v-muted">Each answer contributes 0, 5, or 10 points. The business profile does not change the score.</p>',
+                unsafe_allow_html=True,
+            )
+            tabs = st.tabs([f"{name} ({len(items)})" for name, items in groups.items()])
+            for tab, items in zip(tabs, groups.values()):
+                with tab:
+                    if not items:
+                        st.caption("None.")
+                    for row in items:
+                        st.markdown(f"**{row['prompt']}**")
+                        st.write(row["label"])
+                        st.caption(f"{POINTS[row['rating']]} points")
+    with questionnaire:
+        if not client["answers"]:
+            st.caption("No answers yet.")
+        for row in client["answers"]:
+            st.markdown(f"**{row['display_order']}. {row['prompt']}**")
+            st.write(row["label"])
+    with history:
+        if client["score"] is not None:
+            with st.form("decision"):
+                decision = st.selectbox("Decision", ["accepted", "rejected", "clarification"])
+                owner_message = st.text_area("Message the owner sees (required for clarification)", max_chars=1000)
+                private_note = st.text_area("Private note (advisor only)", max_chars=1000)
+                if st.form_submit_button("Record decision", type="primary"):
+                    try:
+                        db.record_decision(
+                            firm_id=user["firm_id"],
+                            advisor_id=user["id"],
+                            client_id=client["id"],
+                            decision=decision,
+                            owner_message=owner_message,
+                            private_note=private_note,
+                        )
+                    except (ValueError, PermissionError) as exc:
+                        st.error(str(exc))
+                    else:
+                        st.rerun()
+        if not client["decisions"]:
+            st.caption("No decisions yet.")
+        for item in client["decisions"]:
+            st.markdown(f"**{item['decision']}** · {item['advisor_name']} · {item['created_at']}")
+            if item.get("owner_message"):
+                st.write(f"Owner message: {item['owner_message']}")
+            if item.get("private_note"):
+                st.caption(f"Private: {item['private_note']}")
+            if item.get("reply_message"):
+                st.write(f"Owner reply: {item['reply_message']}")
